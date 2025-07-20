@@ -1,0 +1,110 @@
+ init.py
+ calculator.py
+ pdf_report.py
+
+init.py (give only blanks)
+
+calculator.py:
+import streamlit as st
+
+def calculator_component():
+    st.markdown("### Calculator")
+    st.write("Enter values and choose an operation:")
+
+    col1, col2 = st.columns([2,1])
+    with col1:
+        a = st.number_input("Enter first number (a):", value=0.00, step=0.01, format="%.2f", key="calc_a")
+    with col2:
+        plus_minus_a = st.radio("Sign of a", ["+", "-"], index=0, key="plus_minus_a")
+    a = a if plus_minus_a == "+" else -a
+
+    col3, col4 = st.columns([2,1])
+    with col3:
+        b = st.number_input("Enter second number (b):", value=0.00, step=0.01, format="%.2f", key="calc_b")
+    with col4:
+        plus_minus_b = st.radio("Sign of b", ["+", "-"], index=0, key="plus_minus_b")
+    b = b if plus_minus_b == "+" else -b
+
+    operation = st.selectbox("Select operation:", ["Add", "Subtract", "Multiply", "Divide"], key="calc_op")
+
+    if st.button("Calculate"):
+        try:
+            if operation == "Add":
+                result = a + b
+            elif operation == "Subtract":
+                result = a - b
+            elif operation == "Multiply":
+                result = a * b
+            elif operation == "Divide":
+                if b == 0:
+                    st.error("Cannot divide by zero.")
+                    return
+                result = a / b
+            st.success(f"Result: {result}")
+        except Exception as e:
+            st.error(f"Error: {e}")
+
+
+
+pdf_report.py:
+ from fpdf import FPDF
+import io
+import streamlit as st
+
+def safe_pdf_text(label, val):
+    try:
+        s = str(val) if val is not None else ""
+    except Exception:
+        s = ""
+    s = s.strip()
+    if s == "" or s == "\n" or s is None:
+        s = "[empty]"
+    # Additionally, FPDF will error if s is just newlines, so force at least visible text.
+    return f"{label}: {s}"
+
+def make_mode_pdf(
+    user_name,
+    mode_name,
+    questions,
+    user_answers,
+    ai_feedbacks,
+    ai_scores,
+    start_time=None,
+    end_time=None,
+):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", "B", 16)
+    # Always at left margin for each item; never overflow right edge.
+    pdf.set_x(10)
+    pdf.cell(0, 10, f"{mode_name} Results", ln=True, align="C")
+    pdf.set_font("Arial", "", 12)
+    pdf.set_x(10)
+    pdf.cell(0, 10, safe_pdf_text("User", user_name), ln=True)
+    pdf.set_x(10)
+    pdf.cell(0, 10, safe_pdf_text("Start", start_time), ln=True)
+    pdf.set_x(10)
+    pdf.cell(0, 10, safe_pdf_text("End", end_time), ln=True)
+    pdf.ln(5)
+    for i, (q, ua, fb, score) in enumerate(zip(questions, user_answers, ai_feedbacks, ai_scores), 1):
+        pdf.set_x(10)
+        pdf.multi_cell(0, 8, safe_pdf_text(f"Q{i}", q))
+        pdf.set_x(10)
+        pdf.multi_cell(0, 8, safe_pdf_text("Your Answer", ua))
+        pdf.set_x(10)
+        pdf.multi_cell(0, 8, safe_pdf_text("AI Feedback", fb))
+        if score is not None:
+            pdf.set_x(10)
+            pdf.cell(0, 8, safe_pdf_text("Score", score), ln=True)
+        pdf.ln(2)
+    pdf_buffer = io.BytesIO()
+    pdf.output(pdf_buffer)
+    pdf_buffer.seek(0)
+    st.download_button(
+        label="Download Results as PDF",
+        data=pdf_buffer,
+        file_name="results.pdf",
+        mime="application/pdf",
+    )
+    return pdf_buffer
+
