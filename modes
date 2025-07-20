@@ -1,0 +1,268 @@
+__init__.py (blanks)
+practice.py
+learn.py
+quiz.py
+collaboration.py
+
+
+practice.py:
+import streamlit as st
+import numpy as np
+import os
+from utils.admin_data import log_user_activity
+from components.pdf_report import make_mode_pdf
+
+def practice_mode():
+    st.header("Practice Mode")
+
+    # Step 1: User selects number of questions and operation, then starts practice
+    num_questions = st.number_input("Number of practice questions", 1, 20, 3)
+    operation = st.selectbox("Select operation:", ["Add", "Subtract", "Multiply", "Divide"])
+
+    if st.button("Start Practice") or "practice" not in st.session_state:
+        questions = []
+        answers = []
+        for _ in range(num_questions):
+            a, b = np.random.randint(1, 20, 2)
+            if operation == "Add":
+                q = f"What is {a} + {b}?"
+                ans = str(a + b)
+            elif operation == "Subtract":
+                q = f"What is {a} - {b}?"
+                ans = str(a - b)
+            elif operation == "Multiply":
+                q = f"What is {a} × {b}?"
+                ans = str(a * b)
+            else:
+                b = b if b != 0 else 1
+                q = f"What is {a} ÷ {b}?"
+                ans = str(round(a / b, 2))
+            questions.append(q)
+            answers.append(ans)
+        st.session_state.practice = {
+            "questions": questions,
+            "answers": answers,
+            "current": 0,
+            "user_answers": [],
+            "feedbacks": []
+        }
+        st.rerun()
+
+    # Step 2: Show questions one by one
+    if "practice" in st.session_state:
+        p = st.session_state.practice
+        idx = p["current"]
+        if idx < len(p["questions"]):
+            st.subheader(f"Q{idx+1}: {p['questions'][idx]}")
+            user_answer = st.text_input("Your Answer:", key=f"practice_ans_{idx}")
+            if st.button("Submit Answer", key=f"practice_submit_{idx}"):
+                correct_answer = p["answers"][idx]
+                ai_answer = correct_answer
+                ai_feedback = "Correct!" if user_answer.strip() == correct_answer else f"Incorrect. The correct answer is {correct_answer}."
+                st.write(ai_feedback)
+                # Log to admin_data.xlsx
+                log_user_activity(
+                    st.session_state.user_name,
+                    "Practice",
+                    p["questions"][idx],
+                    user_answer,
+                    ai_answer,
+                    correct_answer,
+                    ai_feedback
+                )
+                p["user_answers"].append(user_answer)
+                p["feedbacks"].append(ai_feedback)
+                p["current"] += 1
+                st.rerun()
+        else:
+            st.success("Practice session complete!")
+            for i, (q, ua, fb) in enumerate(zip(p["questions"], p["user_answers"], p["feedbacks"]), 1):
+                st.write(f"Q{i}: {q}")
+                st.write(f"Your Answer: {ua}")
+                st.write(f"Feedback: {fb}")
+            # --- PDF Download Option ---
+            pdf_stream = make_mode_pdf(
+                st.session_state.user_name,
+                "Practice Mode",
+                p["questions"],
+                p["user_answers"],
+                p["feedbacks"],
+                p["answers"],
+                None,  # start_time (optional)
+                None   # end_time (optional)
+            )
+            # Save a copy to users_pdfs folder
+            pdf_bytes = pdf_stream.getvalue() if hasattr(pdf_stream, "getvalue") else pdf_stream.read()
+            pdf_folder = "users_pdfs"
+            os.makedirs(pdf_folder, exist_ok=True)
+            pdf_filename = os.path.join(pdf_folder, f"{st.session_state.user_name}_Practice.pdf")
+            with open(pdf_filename, "wb") as f:
+                f.write(pdf_bytes)
+            # Download button for user
+            st.download_button(
+                label="Download Practice Results PDF",
+                data=pdf_bytes,
+                file_name=f"{st.session_state.user_name}_Practice.pdf",
+                mime="application/pdf"
+            )
+            if st.button("Restart Practice"):
+                del st.session_state.practice
+                st.rerun()
+
+
+learn.py
+import streamlit as st
+from datetime import datetime
+from groq_utils import groq_chat
+from components.pdf_report import make_mode_pdf
+from utils.admin_data import log_user_activity
+
+def learn_mode():
+    st.header("Learn Mode")
+    if "learn" not in st.session_state:
+        st.session_state.learn = {
+            "questions": [],
+            "user_answers": [],
+            "ai_feedbacks": [],
+            "ai_scores": [],
+            "start_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "end_time": None
+        }
+    s = st.session_state.learn
+
+    user_q = st.text_area("Ask any math question:")
+    if st.button("Submit Question"):
+        if not user_q.strip(): st.warning("Please ask a question."); return
+        ai_explain = groq_chat(f"Show a step-by-step solution: {user_q}")
+        s["questions"].append(user_q)
+        s["user_answers"].append("")  # No user submission here
+        s["ai_feedbacks"].append(ai_explain)
+        s["ai_scores"].append(None)
+        st.success("See solution below:")
+        st.write(ai_explain)
+
+        # Log the user activity
+        log_user_activity(
+            st.session_state.user_name,
+            "Learn",
+            user_q,              # The user's question
+            "",                   # User answer (not applicable)
+            ai_explain,          # The AI's answer
+            None,                 # Correct answer (not applicable)
+            ai_explain            # AI's feedback/judgement (if available)
+        )
+
+    if s["questions"]:
+        if st.button("Finish Session and Download PDF"):
+            s["end_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            pdf_stream = make_mode_pdf(
+                st.session_state.user_name, "Learn",
+                s["questions"], s["user_answers"], s["ai_feedbacks"], s["ai_scores"],
+                s["start_time"], s["end_time"]
+            )
+            st.download_button(f"Download Learn Results PDF",
+                pdf_stream,
+                file_name=f"{st.session_state.user_name}_Learn.pdf",
+                mime="application/pdf"
+            )
+            if st.button("Restart Learn Mode"):
+                del st.session_state.learn
+                st.rerun()
+
+quiz.py:
+import streamlit as st
+from datetime import datetime
+from groq_utils import groq_chat
+from components.pdf_report import make_mode_pdf
+
+def parse_groq_questions(qtext, n_questions):
+    # Parse only lines like 'Q1: ...'
+    questions = []
+    for line in qtext.split('\n'):
+        line = line.strip()
+        if ':' in line:
+            parts = line.split(':', 1)
+            # Only add if right-hand side is not empty/whitespace
+            if len(parts) == 2 and parts[1].strip():
+                questions.append(parts[1].strip())
+        if len(questions) >= n_questions:
+            break
+    return questions
+
+def quiz_mode():
+    st.header("Quiz Challenge")
+    n_questions = st.number_input("Number of quiz questions", 1, 10, 3)
+    difficulty = st.selectbox("Difficulty", ["Easy", "Medium", "Hard"], index=1)
+
+    if st.button("Start Quiz"):
+        prompt = (
+            f"Generate {n_questions} different {difficulty.lower()} math questions for a quiz. "
+            "Format: Q1: ..., Q2: ..., Q3: ..., (each on its own newline). Don't leave any blank lines!"
+        )
+        qtext = groq_chat(prompt)
+        questions = parse_groq_questions(qtext, n_questions)
+        if len(questions) < n_questions:
+            st.error(
+                "Sorry, not enough questions were generated by AI. Try again, or check question prompt."
+            )
+            return
+        st.session_state.quiz = {
+            "questions": questions,
+            "user_answers": [],
+            "ai_feedbacks": [],
+            "ai_scores": [],
+            "start_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "end_time": None,
+            "question_number": 0
+        }
+        st.rerun()
+
+    if "quiz" in st.session_state:
+        s = st.session_state.quiz
+        idx = s.get("question_number", 0)
+        if idx < len(s["questions"]):
+            q = s["questions"][idx]
+            with st.form(key=f"quiz_form_{idx}"):
+                user_ans = st.text_input(f"Q{idx+1}: {q}", key=f"quiz_answer_{idx}")
+                submitted = st.form_submit_button("Submit Answer")
+                if submitted:
+                    if not user_ans.strip():
+                        st.warning("Please enter an answer before submitting.")
+                    else:
+                        prompt = (
+                            f"Student's answer: {user_ans}\n"
+                            f"Target: {q}\n"
+                            "1. Score answer (1 for fully correct, else 0)\n"
+                            "2. Give step-by-step solution/correction"
+                        )
+                        ai_fb = groq_chat(prompt)
+                        score = 1 if "correct" in ai_fb.lower() else 0
+                        s["user_answers"].append(user_ans)
+                        s["ai_feedbacks"].append(ai_fb)
+                        s["ai_scores"].append(score)
+                        s["question_number"] = idx + 1
+                        st.rerun()
+        else:
+            s["end_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            st.success("Quiz complete!")
+            pdf_stream = make_mode_pdf(
+                st.session_state.user_name, "Quiz Challenge",
+                s["questions"], s["user_answers"], s["ai_feedbacks"], s["ai_scores"],
+                s["start_time"], s["end_time"]
+            )
+            st.download_button(
+                label="Download your Quiz Results PDF",
+                data=pdf_stream,
+                file_name=f"{st.session_state.user_name}_Quiz.pdf",
+                mime="application/pdf"
+            )
+            if st.button("Restart Quiz"):
+                del st.session_state.quiz
+                st.rerun()
+
+collaboration.py:
+import streamlit as st
+
+def collaboration_mode():
+    st.header("Collaboration Mode (Prototype)")
+    st.info("This feature is under development.")
